@@ -1,0 +1,17 @@
+{
+  "selected_k": 3,
+  "pca_variance_threshold": 0.92,
+  "retained_variance": 0.9217013120651245,
+  "random_state": 42,
+  "timestamp": "2026-02-19T19:15:33.044873+00:00",
+  "max_scatter_points": 20000,
+  "k_range_evaluated": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ]
+}
