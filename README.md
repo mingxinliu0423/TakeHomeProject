@@ -1,12 +1,12 @@
 # Census Income Modeling for Retail Targeting
 
 This repository contains two connected workflows on the 1994--95 Census Income data: weighted income classification and unsupervised segmentation for targeting strategy.  
-The selected classifier is XGBoost, with hold-out ROC-AUC `0.9552`, F1 `0.5871`, and Precision@20% `0.2853`.  
-The validation base rate is `0.0620`, so Precision@20% corresponds to roughly `4.60x` lift at the top of the ranked list.  
-Logistic regression was a stronger baseline than expected (ROC-AUC `0.9449`, Precision@20% `0.2800`), and the gap to XGBoost is modest rather than structural.  
+The selected classifier is XGBoost, with hold-out ROC-AUC `0.9540`, weighted ROC-AUC `0.9540`, F1 `0.5820`, and Precision@20% `0.2844` (weighted `0.2921`).  
+Validation base rates are `0.0620` (unweighted) and `0.0647` (weighted), so top-20% lift is `4.58x` unweighted and `4.52x` weighted.  
+Logistic regression was still a strong baseline (ROC-AUC `0.9435`, Precision@20% `0.2768`), so XGBoost is a margin win rather than a huge jump.  
 That pattern suggests a large share of predictive signal is captured by relatively low-order effects in the encoded feature space, with boosting adding incremental refinements.  
 Segmentation used standardized numeric variables, one-hot encoded categoricals, PCA retaining `92.17%` variance, and KMeans with `K` constrained to `3..5`.  
-`K=3` was retained for operational clarity, but silhouette scores are low (`0.2257` at `K=3`, `0.2310` at `K=5`), so these clusters should be treated as coarse planning buckets, not sharply separated customer types.
+`K=3` was retained for operational clarity, but silhouette scores are still low (`0.2270` at `K=3`, `0.2325` at `K=5`), so these clusters should be treated as coarse planning buckets, not sharply separated customer types.
 
 ## Repository Structure
 
@@ -25,14 +25,21 @@ project_root/
 |   `-- segmentation.py
 |-- artifacts/
 |   |-- metrics.csv
+|   |-- metrics_summary.csv
 |   |-- best_model.pkl
 |   |-- classification_roc_curves.png
+|   |-- gains_table.csv
+|   |-- gains_table_<model>.csv
+|   |-- gains_curve.png
+|   |-- calibration_curve.png
 |   |-- cluster_summary.csv
 |   |-- cluster_kmeans_metrics.csv
 |   |-- segmentation_preprocessor.pkl
 |   |-- segmentation_pca.pkl
 |   |-- segmentation_kmeans.pkl
 |   |-- segmentation_metadata.json
+|   |-- segmentation_stability.json
+|   |-- segment_messaging.csv
 |   `-- segmentation_plots.png
 |-- report/
 |   `-- report.tex
@@ -56,8 +63,13 @@ python src/train.py
 
 Outputs:
 - `artifacts/metrics.csv`
+- `artifacts/metrics_summary.csv`
 - `artifacts/best_model.pkl`
 - `artifacts/classification_roc_curves.png`
+- `artifacts/gains_table.csv`
+- `artifacts/gains_table_<model>.csv`
+- `artifacts/gains_curve.png`
+- `artifacts/calibration_curve.png`
 
 ## Run Segmentation
 
@@ -72,7 +84,22 @@ Outputs:
 - `artifacts/segmentation_pca.pkl`
 - `artifacts/segmentation_kmeans.pkl`
 - `artifacts/segmentation_metadata.json`
+- `artifacts/segmentation_stability.json`
+- `artifacts/segment_messaging.csv`
 - `artifacts/segmentation_plots.png`
+
+## Key Outputs
+
+- `artifacts/metrics.csv`: primary seed-2026 model comparison (ROC-AUC, Precision@Top20, and Brier; each with weighted counterpart where applicable).
+- `artifacts/metrics_summary.csv`: mean/std uncertainty summary across deterministic seeds `2026..2030`.
+- `artifacts/gains_table.csv`: best-model gains table at 5/10/20/30% target depths.
+- `artifacts/gains_table_<model>.csv`: same gains breakdown for each candidate classifier.
+- `artifacts/gains_curve.png`: precision/lift by depth for the selected model.
+- `artifacts/calibration_curve.png`: reliability view plus Brier scores for the selected model.
+- `artifacts/cluster_summary.csv`: weighted cluster profiling table with demographics and work-intensity stats.
+- `artifacts/segmentation_stability.json`: ARI-based stability check for final `K`.
+- `artifacts/segment_messaging.csv`: compact cluster-to-message/channel hypothesis table.
+- `artifacts/segmentation_preprocessor.pkl`, `artifacts/segmentation_pca.pkl`, `artifacts/segmentation_kmeans.pkl`: reproducible scoring path for assigning new records to clusters.
 
 ## Reproducibility Notes
 

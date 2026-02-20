@@ -11,18 +11,64 @@ from clustering_utils import (
     build_cluster_summary,
     create_segmentation_plots,
     evaluate_kmeans_range,
+    evaluate_kmeans_stability,
     fit_final_kmeans,
     select_reasonable_k,
     transform_features_with_pca,
 )
 from data_loader import load_dataset
 
-RANDOM_STATE = 42
+RANDOM_STATE = 2026
 PCA_VARIANCE_THRESHOLD = 0.92
 K_VALUES = range(2, 9)
 MIN_SELECTED_K = 3
 MAX_SELECTED_K = 5
 MAX_SCATTER_POINTS = 20_000
+STABILITY_SAMPLE_SIZE = 20_000
+STABILITY_SEEDS = [2026, 2027, 2028, 2029, 2030]
+
+
+def build_segment_messaging(cluster_summary: pd.DataFrame) -> pd.DataFrame:
+    """Create a simple, factual messaging hypothesis table from cluster stats."""
+    rows: list[dict[str, str | int]] = []
+    for _, row in cluster_summary.sort_values("cluster").iterrows():
+        cluster_id = int(row["cluster"])
+        income_rate = float(row.get("weighted_income_rate", 0.0))
+        age_mean = float(row.get("age_mean", float("nan")))
+        occupation_top = str(row.get("occupation_distribution_top3", "N/A")).split(";")[0]
+
+        age_text = "unknown age"
+        if pd.notna(age_mean):
+            age_text = f"mean age {age_mean:.1f}"
+        short_profile = (
+            f"{age_text}, weighted income rate {income_rate:.1%}, top occupation: {occupation_top}."
+        )
+
+        # rules are pretty simple here; good enough for first pass.
+        if income_rate >= 0.10:
+            suggested_message = "Lead with premium bundles and convenience-focused value."
+        elif income_rate >= 0.03:
+            suggested_message = "Lead with value-plus bundles and loyalty nudges."
+        else:
+            suggested_message = "Lead with low-commitment essentials and clear savings."
+
+        if pd.notna(age_mean) and age_mean < 30:
+            suggested_channels = "social, mobile, email"
+        elif pd.notna(age_mean) and age_mean < 50:
+            suggested_channels = "email, search, web"
+        else:
+            suggested_channels = "email, direct mail, call center"
+
+        rows.append(
+            {
+                "cluster_id": cluster_id,
+                "short_profile": short_profile,
+                "suggested_message": suggested_message,
+                "suggested_channels": suggested_channels,
+            }
+        )
+
+    return pd.DataFrame(rows)
 
 
 def main() -> None:
@@ -94,8 +140,22 @@ def main() -> None:
     cluster_summary_path = artifacts_dir / "cluster_summary.csv"
     cluster_summary.to_csv(cluster_summary_path, index=False)
 
+    segment_messaging = build_segment_messaging(cluster_summary=cluster_summary)
+    segment_messaging_path = artifacts_dir / "segment_messaging.csv"
+    segment_messaging.to_csv(segment_messaging_path, index=False)
+
     kmeans_metrics_path = artifacts_dir / "cluster_kmeans_metrics.csv"
     kmeans_metrics.to_csv(kmeans_metrics_path, index=False)
+
+    stability_path = artifacts_dir / "segmentation_stability.json"
+    stability_payload = evaluate_kmeans_stability(
+        transformed_pca=transformed_pca,
+        n_clusters=selected_k,
+        seeds=STABILITY_SEEDS,
+        sample_size=STABILITY_SAMPLE_SIZE,
+        sample_seed=RANDOM_STATE,
+    )
+    stability_path.write_text(json.dumps(stability_payload, indent=2), encoding="utf-8")
 
     plot_path = artifacts_dir / "segmentation_plots.png"
     create_segmentation_plots(
@@ -124,7 +184,9 @@ def main() -> None:
     print("\nCluster profile preview:")
     print(summary_preview.to_string(index=False))
     print(f"\nSaved cluster summary: {cluster_summary_path}")
+    print(f"Saved segment messaging: {segment_messaging_path}")
     print(f"Saved KMeans diagnostics: {kmeans_metrics_path}")
+    print(f"Saved segmentation stability: {stability_path}")
     print(f"Saved segmentation plot: {plot_path}")
     print(f"Saved segmentation preprocessor: {preprocessor_path}")
     print(f"Saved segmentation PCA: {pca_path}")

@@ -1,16 +1,19 @@
 \documentclass[11pt]{article}
 
 \usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+
 \usepackage{amsmath}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{hyperref}
 
 \hypersetup{
-    colorlinks=true,
-    linkcolor=blue,
-    urlcolor=blue,
-    citecolor=blue
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
 }
 
 \title{Retail Income Targeting and Segmentation\\Technical Report}
@@ -21,120 +24,194 @@
 \maketitle
 
 \section{Executive Summary}
-This work combines supervised ranking for high-income targeting and unsupervised segmentation for campaign planning. For classification, XGBoost delivered the best hold-out performance with ROC-AUC \(0.9552\), F1 \(0.5871\), and Precision@Top20\% \(0.2853\). Logistic regression remained competitive (ROC-AUC \(0.9449\), Precision@Top20\% \(0.2800\)), so the incremental gain from XGBoost is real but not dramatic.
 
-For segmentation, the feature matrix was standardized/encoded, reduced with PCA to \(92.17\%\) retained variance, and clustered with KMeans. Under the constraint \(K\in\{3,4,5\}\), \(K=3\) was selected from elbow and interpretability considerations. Silhouette values are modest, which means these groups are useful as broad planning segments rather than sharply separated customer archetypes.
+This project supports two related campaign workflows: (i) ranking households by likelihood of higher income ($>50K$) for targeting, and (ii) producing broad, interpretable segments for planning and messaging.
+
+On a single stratified hold-out split (\texttt{random\_state=2026}), XGBoost achieved ROC-AUC $0.9540$ (weighted $0.9540$), F1 $0.5820$, and Precision@Top20\% $0.2844$ (weighted $0.2921$). Logistic regression remained competitive (ROC-AUC $0.9435$, Precision@Top20\% $0.2768$), so the incremental gain from XGBoost is real but not a step-change.
+
+For segmentation, features were standardized/encoded, reduced with PCA to $92.17\%$ retained variance, and clustered with KMeans. Under the operational constraint $K\in\{3,4,5\}$, $K=3$ was selected based on elbow and interpretability. Silhouette values are modest (e.g., $0.227$ at $K=3$, $0.233$ at $K=5$), so the clusters should be used as planning buckets rather than as sharply separated behavioral archetypes.
 
 \section{Business Objective}
-The immediate business question is how to concentrate marketing spend where conversion value is likely higher. In this dataset, income \(>50K\) is treated as a proxy for purchasing power, so the classification model is used as a ranking tool for campaign eligibility. Segmentation then adds an interpretable layer for message strategy and budget splits across heterogeneous households.
 
-Because the source is a weighted survey sample, the \texttt{weight} variable is part of the modeling design, not optional metadata. Ignoring it would shift training emphasis toward sample composition instead of population composition.
+The business question is how to concentrate outreach where economic return is likely higher. In this dataset, income above $50K$ is treated as a proxy for purchasing power, so the classifier is used as a \emph{ranking} tool: you choose a targeting depth (e.g., top 10\%, top 20\%) based on budget and channel constraints.
 
-\section{Data Understanding \& Exploration}
-The dataset has 199{,}523 rows and 42 columns: 40 predictors, one sample-weight column, and one binary income label. The positive class is limited: unweighted prevalence is \(6.21\%\), and weighted prevalence is \(6.41\%\). This imbalance is one reason Precision@Top20\% was included; average precision over the full population would understate the business value of ranked targeting.
+Because the source is a weighted survey sample, \texttt{weight} is part of the modeling design rather than optional metadata. Training with weights steers optimization toward population-level structure instead of sample composition. In evaluation, we report both unweighted and weighted metrics so the results are interpretable under both views.
 
-The strongest numeric associations with the income label are work intensity and investment-related fields (for example, weeks worked in year and capital gains). These are correlation signals, not causal effects. They are still useful for predictive ranking, but interpretation should remain operational rather than behavioral.
+\section{Data Understanding and Exploration}
+
+The dataset contains 199{,}523 rows and 42 columns: 40 predictors, one sample-weight column, and one binary income label. The positive class is rare: unweighted prevalence is $6.21\%$ and weighted prevalence is $6.41\%$. This imbalance is why Precision@Top20\% is emphasized; for campaign operations, concentration within the top-ranked slice is usually more actionable than global accuracy.
+
+The strongest numeric associations with the label are work intensity and investment-related fields (for example, weeks worked in year and capital gains). These are correlation signals, not causal effects. They are still useful for ranking, but interpretation should stay operational.
 
 \section{Classification Methodology}
-All three required models were evaluated on the same 80/20 stratified split (\texttt{random\_state=42}): L2-regularized logistic regression, random forest, and XGBoost. Each model was wrapped in a leakage-safe \texttt{Pipeline} with a \texttt{ColumnTransformer}. Numeric fields used median imputation (plus standardization for logistic regression only), while categoricals used most-frequent imputation and one-hot encoding.
 
-Training uses sample weights through weighted empirical risk minimization:
-\[
-\hat{\theta} = \arg\min_{\theta}\sum_{i=1}^{n} w_i\,\ell\!\left(y_i,f_{\theta}(x_i)\right).
-\]
-Here \(w_i\) represents the survey weight for record \(i\).
+All three required models were evaluated on the same 80/20 stratified split (\texttt{random\_state=2026}): L2-regularized logistic regression, random forest, and XGBoost. Each model was implemented as a leakage-safe \texttt{Pipeline} with a \texttt{ColumnTransformer}:
 
-Precision@Top\(k\) is computed by sorting validation records by predicted probability and taking the top \(k\) fraction (\(k=0.20\)):
+\begin{itemize}
+  \item Numeric features: median imputation; standardization for logistic regression only.
+  \item Categorical features: most-frequent imputation; one-hot encoding with unknown handling.
+\end{itemize}
+
+Training incorporates survey weights through weighted empirical risk minimization:
 \[
-\text{Precision@Top}k = \frac{1}{|S_k|}\sum_{i\in S_k} y_i,
+\hat{\theta} = \arg\min_{\theta}\sum_{i=1}^{n} w_i\,\ell\!\left(y_i,f_{\theta}(x_i)\right),
 \]
-where \(S_k\) is the top-ranked subset.
+where $w_i$ is the survey weight for record $i$.
+
+Precision@Top$k$ is computed by sorting validation records by predicted probability and taking the top fraction ($k=0.20$):
+\[
+\mathrm{Precision@Top}k = \frac{1}{|S_k|}\sum_{i\in S_k} y_i,
+\]
+where $S_k$ is the top-ranked subset.
 
 \section{Classification Results}
+
 \begin{table}[h]
 \centering
-\caption{Validation metrics on shared hold-out data}
-\begin{tabular}{lccc}
+\caption{Validation metrics on shared hold-out data (\texttt{metrics.csv}).}
+\begin{tabular}{lcccccc}
 \toprule
-Model & ROC-AUC & F1 & Precision@Top20\% \\
+Model & ROC-AUC & ROC-AUC (w) & P@20\% & P@20\% (w) & Brier & Brier (w) \\
 \midrule
-XGBoost & 0.9552 & 0.5871 & 0.2853 \\
-Logistic Regression & 0.9449 & 0.4996 & 0.2800 \\
-Random Forest & 0.9444 & 0.5141 & 0.2773 \\
+XGBoost & 0.9540 & 0.9540 & 0.2844 & 0.2921 & 0.0320 & 0.0328 \\
+Random Forest & 0.9449 & 0.9451 & 0.2783 & 0.2858 & 0.0348 & 0.0357 \\
+Logistic Regression & 0.9435 & 0.9432 & 0.2768 & 0.2847 & 0.0362 & 0.0372 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Classification Evaluation: Weighted vs. Unweighted}
-Model ranking is compared with sample-level metrics on the same validation rows, so ROC-AUC, F1, and Precision@Top20\% remain the primary baseline for model selection. Those metrics reflect the direct ranking behavior seen by the hold-out sample. In parallel, weighted ROC-AUC is reported in \texttt{metrics.csv} using survey weights to check whether discrimination is materially different when evaluated in population terms. In this project it is treated as a consistency check rather than a new optimization target.
+\subsection{Weighted vs.\ Unweighted Interpretation}
 
-XGBoost improves ROC-AUC by about \(1.03\) percentage points over logistic regression and \(1.08\) points over random forest. The Precision@Top20\% gain versus logistic regression is smaller (\(+0.53\) points), but at campaign scale this can still translate into meaningful lift in contact efficiency.
+We report both unweighted and weighted metrics. Unweighted metrics reflect the hold-out sample behavior directly. Weighted metrics (e.g., weighted ROC-AUC, weighted Precision@Top20\%) reweight the validation rows toward population representation. For campaign decisions, the key quantity is precision/lift at a chosen targeting depth. Budgeting uses weighted Precision@TopK (population-facing), while model selection uses unweighted metrics for hold-out comparability.
 
-The validation base positive rate is \(6.20\%\) (2{,}476 positives out of 39{,}905 records). With XGBoost, Precision@Top20\% is \(28.53\%\), which corresponds to lift \(=0.2853/0.0620\approx 4.60\times\). This is usually economically meaningful when outbound contact is expensive, since the top-ranked quintile is substantially denser in positives than the population average. The incremental lift over logistic regression is still limited (\(\approx 4.51\times\) vs \(4.60\times\)), so expected campaign value should be checked against model complexity and scoring cost.
+The validation base positive rates are $6.20\%$ unweighted and $6.47\%$ weighted. At 20\% depth, XGBoost reaches $28.44\%$ precision unweighted and $29.21\%$ weighted, equivalent to lift of $4.58\times$ and $4.52\times$. This is the main operational takeaway: the top quintile is several times denser in positives than the baseline population.
 
-The ROC curves in \texttt{classification\_roc\_curves.png} are close to one another, with XGBoost generally above the other two across most thresholds. The separation is consistent rather than large, which is why model choice here is a margin decision, not a step-change decision.
+\subsection{Gains at Campaign Depths}
 
-An unexpected finding is how strong logistic regression remains. The one-hot feature space appears to capture most of the predictive structure through low-order effects, and regularization keeps estimation stable in a high-dimensional setting. While ROC-AUC is high, the absolute gain in precision at operationally relevant cutoffs is moderate.
+Campaign decisions are driven by precision/lift at fixed targeting depth, not by a global threshold. Table~\ref{tab:gains-best-model} shows the XGBoost gains profile from \texttt{gains\_table.csv}.
+
+\begin{table}[h]
+\centering
+\caption{XGBoost gains profile by targeting depth (\texttt{gains\_table.csv}).}
+\label{tab:gains-best-model}
+\begin{tabular}{lcccc}
+\toprule
+Depth & Precision & Lift & Precision (w) & Lift (w) \\
+\midrule
+5\%  & 0.6844 & 11.03 & 0.6946 & 10.74 \\
+10\% & 0.4681 & 7.54  & 0.4796 & 7.42 \\
+20\% & 0.2844 & 4.58  & 0.2921 & 4.52 \\
+30\% & 0.2000 & 3.22  & 0.2060 & 3.19 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The curve decays in the expected way: performance is strongest at very shallow depth and tapers as the campaign expands. Operationally, this gives a simple knob for balancing volume and contact efficiency.
+
+\subsection{Calibration Check}
+
+Because the score may be used in economic reasoning, we include a calibration diagnostic. For XGBoost, the Brier score is $0.0320$ (weighted $0.0328$). The reliability plot in \texttt{calibration\_curve.png} does not suggest a severe failure in the score ranges used for targeting, although it is not perfectly calibrated.
+
+\subsection{Uncertainty Across Deterministic Splits}
+
+To assess stability, we ran five deterministic splits (seeds 2026--2030), summarized in \texttt{metrics\_summary.csv}. For XGBoost, ROC-AUC is $0.9533 \pm 0.0008$, Precision@Top20\% is $0.2836 \pm 0.0010$, and lift@20 is $4.571 \pm 0.016$. Variance is low, so ranking quality is fairly stable under modest split perturbations.
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.72\textwidth]{../artifacts/classification_roc_curves.png}
-\caption{Validation ROC curves for the three classifiers.}
+\caption{Validation ROC curves for the three classifiers (\texttt{classification\_roc\_curves.png}).}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.72\textwidth]{../artifacts/gains_curve.png}
+\caption{XGBoost gains curve (precision and lift by depth) (\texttt{gains\_curve.png}).}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.62\textwidth]{../artifacts/calibration_curve.png}
+\caption{XGBoost calibration curve (\texttt{calibration\_curve.png}).}
 \end{figure}
 
 \section{Segmentation Methodology}
-Segmentation intentionally excluded both label and weight from the clustering feature matrix. Numeric variables were standardized after imputation; categoricals were one-hot encoded. PCA was then applied, retaining \(92.17\%\) of total variance.
 
-KMeans was evaluated for \(K=2\) through \(8\) using inertia and silhouette, and the final selection was restricted to \(K=3\) to \(5\). Within that range, silhouette is \(0.2257\) at \(K=3\), \(0.2223\) at \(K=4\), and \(0.2310\) at \(K=5\). The \(K=5\) silhouette advantage over \(K=3\) is only \(0.0054\), so \(K=3\) was retained for interpretability and cleaner operational use.
+Segmentation intentionally excluded both label and weight from the clustering feature matrix. Numeric variables were standardized after imputation; categoricals were one-hot encoded. PCA was then applied, retaining $92.17\%$ of total variance.
 
-These silhouette levels are low. They imply weak geometric separation and suggest the tabular census covariates may not naturally organize into compact, well-separated groups. KMeans also imposes approximately spherical cluster structure in transformed space, which may be a poor match for the true population geometry.
+KMeans was evaluated for $K=2$ through $8$ using inertia and silhouette, and the final selection was restricted to $K=3$ to $5$. Within that range, silhouette is $0.2270$ at $K=3$, $0.2239$ at $K=4$, and $0.2325$ at $K=5$. The $K=5$ silhouette advantage over $K=3$ is only $0.0055$, so $K=3$ was retained for interpretability and cleaner operational use.
+
+These silhouette levels are low. They imply weak geometric separation and suggest the covariates may not naturally organize into compact, well-separated groups. KMeans also imposes roughly spherical cluster structure in transformed space, which may not be the best match for mixed socioeconomic tabular data.
 
 \subsection{Reproducible Cluster Assignment}
-The segmentation transformation path is now fully serializable. \texttt{segmentation\_preprocessor.pkl}, \texttt{segmentation\_pca.pkl}, and \texttt{segmentation\_kmeans.pkl} are saved after fitting, with run settings captured in \texttt{segmentation\_metadata.json}. This allows deterministic assignment of new records to the same cluster space without refitting.
+
+The segmentation transformation path is serializable. \texttt{segmentation\_preprocessor.pkl}, \texttt{segmentation\_pca.pkl}, and \texttt{segmentation\_kmeans.pkl} are saved after fitting, with run settings in \texttt{segmentation\_metadata.json}. This enables deterministic assignment of new records to the same cluster space without refitting.
+
+\subsection{Stability Check}
+
+Cluster stability was checked on a fixed 20k PCA sample using seeds 2026--2030 and pairwise ARI (\texttt{segmentation\_stability.json}). The observed ARI range is $1.00$ to $1.00$ with mean $1.00$, indicating numerical stability under KMeans initialization changes on that fixed sample. This check does not test stability under resampling or alternative feature specifications.
 
 \section{Segmentation Results}
+
 \begin{table}[h]
 \centering
-\caption{Weighted cluster profile summary}
+\caption{Weighted cluster profile summary (\texttt{cluster\_summary.csv}).}
 \begin{tabular}{lrrrr}
 \toprule
 Cluster & Records & Weighted Population & Weighted Income Rate & Mean Age \\
 \midrule
-0 & 52{,}791 & 88.30M & 0.0000 & 7.83 \\
-1 & 47{,}511 & 82.72M & 0.0185 & 55.09 \\
-2 & 99{,}221 & 176.22M & 0.1175 & 38.15 \\
+0 & 99{,}221 & 176.22M & 0.1175 & 38.15 \\
+1 & 52{,}791 & 88.30M & $<0.001$ & 7.83 \\
+2 & 47{,}511 & 82.72M & 0.0185 & 55.09 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The cluster profiles are directionally coherent: a youth-heavy segment (Cluster 0), an older low-income segment (Cluster 1), and a working-age segment with the highest income incidence (Cluster 2). The PCA projection shows visible overlap among groups, consistent with the low silhouette values. These should be treated as practical partitions for planning, not as clean latent classes.
+The profiles are internally coherent. Cluster 0 is working-age with the strongest income rate and higher labor attachment (e.g., mean weeks worked $44.9$, mean capital gains \$761). Cluster 1 is a youth-heavy segment with minimal work intensity and essentially zero high-income incidence. Cluster 2 is older with low work intensity and low income incidence. The PCA projection still shows overlap among groups, so these should be used as operational segments rather than as hard population boundaries.
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=\textwidth]{../artifacts/segmentation_plots.png}
-\caption{KMeans diagnostics and 2D PCA projection of clusters.}
+\caption{KMeans diagnostics and 2D PCA projection of clusters (\texttt{segmentation\_plots.png}).}
 \end{figure}
 
-\section{Business Recommendations}
-Use the classifier score as the primary allocation axis, then apply segment overlays for creative and channel strategy. Cluster 2 is the strongest candidate for premium and upsell campaigns. Cluster 1 is better suited to lower-cost retention or value-oriented messaging. Cluster 0 should typically be excluded from income-driven offers unless the product strategy explicitly targets household-level decision makers.
+\begin{table}[h]
+\centering
+\caption{Messaging hypothesis by segment (\texttt{segment\_messaging.csv}).}
+\begin{tabular}{p{0.08\textwidth} p{0.38\textwidth} p{0.30\textwidth} p{0.18\textwidth}}
+\toprule
+Cluster & Short profile & Suggested message & Channels \\
+\midrule
+0 & Mean age 38.1, weighted income rate 11.8\%, top occupation: administrative support. & Lead with premium bundles and convenience-focused value. & Email, search, web \\
+1 & Mean age 7.8, weighted income rate $<0.001$, top occupation: not in universe. & Lead with low-commitment essentials and clear savings. & Social, mobile, email \\
+2 & Mean age 55.1, weighted income rate 1.9\%, top occupation: not in universe. & Lead with low-commitment essentials and clear savings. & Email, direct mail, call center \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-This combination balances accuracy and operational simplicity: one score for ranking, one segment label for messaging context.
+\section{Business Recommendations}
+
+Use the classifier score as the primary allocation axis, then apply segment overlays for creative and channel strategy. Cluster 0 is the strongest candidate for premium and upsell campaigns. Cluster 2 is better suited to lower-cost retention or value-oriented messaging. Cluster 1 should typically be excluded from income-driven offers unless the product strategy explicitly targets household-level decision makers.
+
+This combination balances accuracy and operational simplicity: one score for ranking and one segment label for messaging context.
 
 \section{Production Deployment Considerations}
+
 Thresholding should be cost-sensitive rather than fixed at 0.5. A practical rule is to contact an account when expected value is positive:
 \[
 \hat{p}(x)\cdot V_{\text{response}} - C_{\text{contact}} > 0.
 \]
-Here \(\hat{p}(x)\) is the predicted response proxy (income-above-threshold probability), \(V_{\text{response}}\) is expected contribution value, and \(C_{\text{contact}}\) is channel cost.
+Here $\hat{p}(x)$ is the predicted proxy (income-above-threshold probability), $V_{\text{response}}$ is expected contribution value, and $C_{\text{contact}}$ is channel cost.
 
 Operational deployment also depends on feature availability at scoring time. Some high-signal variables in this dataset (for example, annual work and income components) may be delayed, estimated, or absent in real-time systems, which can reduce realized performance unless fallback features are engineered. Monitoring should include calibration drift, segment share drift, and subgroup-level performance checks. Drift risk is elevated because the training data reflects 1994--95 population structure.
 
 \section{Limitations}
+
 External validity is limited by the 1994--95 data origin; labor-market structure and demographic distributions have changed materially since then. The model is predictive, not causal, so it should not be used to infer policy effects. Bias risk is non-trivial because protected-class proxies can appear in socioeconomic attributes; fairness checks are necessary before operational rollout.
 
-Clustering adds another limitation: KMeans assumes roughly spherical structure in transformed space. Given the observed overlap, segment boundaries are partly algorithmic convenience. A fair self-critique is that more stability analysis across random seeds and sampling schemes would strengthen confidence in segment persistence.
+Clustering adds another limitation: KMeans assumes roughly spherical structure in transformed space. Given the observed overlap, segment boundaries are partly algorithmic convenience. A stronger follow-up would include stability checks under resampling and sensitivity to alternative feature subsets.
 
 \section{Future Improvements}
-Immediate next steps are: (i) cost-optimized threshold tuning with campaign economics, (ii) probability calibration and decision-curve analysis, and (iii) uplift modeling to prioritize incremental impact rather than likelihood alone. On segmentation, periodic retraining and stability tests should be added before relying on segments for long-term budget planning.
+
+Immediate next steps are: (i) cost-optimized depth selection with campaign economics, (ii) calibration monitoring and decision-curve analysis, and (iii) uplift modeling to prioritize incremental impact rather than likelihood alone. On segmentation, periodic retraining and stability tests under resampling should be added before relying on segments for long-term budget planning.
 
 \end{document}

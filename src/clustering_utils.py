@@ -10,7 +10,7 @@ from sklearn.cluster import KMeans
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -220,6 +220,66 @@ def fit_final_kmeans(
     return kmeans, labels
 
 
+def evaluate_kmeans_stability(
+    transformed_pca: np.ndarray,
+    n_clusters: int,
+    seeds: list[int],
+    sample_size: int,
+    sample_seed: int,
+) -> dict[str, float | int | list[int]]:
+    """
+    Estimate clustering stability with pairwise ARI on a fixed sampled subset.
+
+    This is a lightweight check, not a full bootstrap study.
+    """
+    if n_clusters < 2:
+        raise ValueError("n_clusters must be >= 2.")
+    if not seeds:
+        raise ValueError("seeds cannot be empty.")
+
+    sample_idx = _sample_indices(
+        n_rows=transformed_pca.shape[0],
+        max_rows=sample_size,
+        random_state=sample_seed,
+    )
+    sample_matrix = transformed_pca[sample_idx]
+
+    label_runs: list[np.ndarray] = []
+    for seed in seeds:
+        kmeans = KMeans(
+            n_clusters=n_clusters,
+            n_init=20,
+            max_iter=300,
+            random_state=seed,
+        )
+        label_runs.append(kmeans.fit_predict(sample_matrix))
+
+    pairwise_ari: list[float] = []
+    for i in range(len(label_runs)):
+        for j in range(i + 1, len(label_runs)):
+            pairwise_ari.append(float(adjusted_rand_score(label_runs[i], label_runs[j])))
+
+    if not pairwise_ari:
+        mean_ari = float("nan")
+        min_ari = float("nan")
+        max_ari = float("nan")
+    else:
+        mean_ari = float(np.mean(pairwise_ari))
+        min_ari = float(np.min(pairwise_ari))
+        max_ari = float(np.max(pairwise_ari))
+
+    return {
+        "selected_k": int(n_clusters),
+        "sample_size": int(sample_matrix.shape[0]),
+        "sample_seed": int(sample_seed),
+        "seeds": [int(seed) for seed in seeds],
+        "pair_count": int(len(pairwise_ari)),
+        "mean_ari": mean_ari,
+        "min_ari": min_ari,
+        "max_ari": max_ari,
+    }
+
+
 def _weighted_category_shares(
     values: pd.Series,
     sample_weight: pd.Series,
@@ -412,6 +472,29 @@ def build_cluster_summary(
             cluster_features[occupation_column], cluster_weights
         )
 
+        optional_numeric_means: dict[str, float] = {}
+        optional_columns = {
+            "weeks worked in year": "mean_weeks_worked",
+            "capital gains": "mean_capital_gains",
+        }
+        for feature_column, output_column in optional_columns.items():
+            if feature_column not in cluster_features.columns:
+                optional_numeric_means[output_column] = float("nan")
+                continue
+
+            optional_values = pd.to_numeric(
+                cluster_features[feature_column], errors="coerce"
+            )
+            optional_mask = optional_values.notna()
+            if not optional_mask.any():
+                optional_numeric_means[output_column] = float("nan")
+                continue
+
+            optional_numeric_means[output_column] = _weighted_mean(
+                optional_values[optional_mask].to_numpy(dtype="float64"),
+                cluster_weights[optional_mask].to_numpy(dtype="float64"),
+            )
+
         summary_rows.append(
             {
                 "cluster": int(cluster),
@@ -430,6 +513,7 @@ def build_cluster_summary(
                     f"dominant_education={dominant_education}; "
                     f"dominant_occupation={dominant_occupation}"
                 ),
+                **optional_numeric_means,
             }
         )
 
